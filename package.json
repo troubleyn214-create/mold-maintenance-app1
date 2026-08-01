@@ -1,0 +1,17 @@
+{
+  "name": "mold-maintenance-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "QRコードで金型のメンテナンス履歴を管理するローカルWebアプリ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "html5-qrcode": "^2.3.8",
+    "pg": "^8.13.3",
+    "qrcode": "^1.5.4"
+  }
+}
