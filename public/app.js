@@ -16,6 +16,11 @@ function setMessage(message, error = false) {
   if (target) target.innerHTML = `<div class="notice${error ? ' error' : ''}">${escapeHtml(message)}</div>`;
 }
 
+function formatDisplayDate(value) {
+  const [year, month, day] = value.split('-');
+  return `${year}/${month}/${day}${value === today() ? '（今日）' : ''}`;
+}
+
 async function renderHome() {
   app.innerHTML = `<div class="page-title"><div><p class="eyebrow">生産終了時に記録</p><h1>金型ショット数</h1></div><a class="button" href="/scan">QRを読み取る</a></div>
     <section class="card"><h2>金型を登録</h2><form id="mold-form" class="row">
@@ -48,24 +53,47 @@ async function renderMold(id) {
   try {
     const mold = await request(`/api/molds/${id}`);
     app.innerHTML = `<a href="/" class="back">‹ 金型一覧へ</a>
-      <p class="eyebrow">生産終了・段取り時の入力</p><h1>${escapeHtml(mold.name)}</h1>
+      <section class="mold-identity"><span>入力対象の金型</span><h1>${escapeHtml(mold.name)}</h1><small>管理No. ${escapeHtml(mold.id)}</small></section>
       <section class="total-card"><span>累計ショット数</span><strong>${formatShots(mold.total_shots)}</strong><small>shots</small></section>
       <div id="message"></div>
       <section class="card accent"><h2>今回の生産数を記録</h2><form id="shot-form">
-        <div class="row"><div><label for="recorded-on">生産日</label><input id="recorded-on" type="date" value="${today()}" required /></div>
-        <div><label for="shot-count">今回ショット数</label><input id="shot-count" class="shot-input" type="number" inputmode="numeric" min="1" step="1" required placeholder="例：1200" autofocus /></div></div>
-        <p><label for="notes">メモ（任意）</label><input id="notes" maxlength="500" placeholder="例：製品A、昼勤" /></p>
-        <button class="primary-wide" type="submit">ショット数を加算する</button>
+        <label for="shot-count">今回ショット数</label><input id="shot-count" class="shot-input" type="number" inputmode="numeric" min="1" step="1" required placeholder="例：1200" autofocus />
+        <div id="shot-preview" class="shot-preview" aria-live="polite">数字を入力すると加算後の累計を確認できます</div>
+        <button id="submit-shots" class="primary-wide" type="submit">ショット数を記録</button>
+        <div class="compact-options">
+          <details><summary>日付：<span id="date-label">${formatDisplayDate(today())}</span>　変更</summary><label class="detail-label" for="recorded-on">生産日</label><input id="recorded-on" type="date" value="${today()}" required /></details>
+          <details><summary>＋ メモを追加</summary><label class="detail-label" for="notes">メモ（任意）</label><input id="notes" maxlength="500" placeholder="例：製品A、昼勤" /></details>
+        </div>
       </form></section>
       <section class="card no-print"><div class="actions"><button id="show-qr" class="secondary">QRコードを表示・印刷</button><a class="button secondary" href="/scan">別のQRを読み取る</a></div><div id="qr-area"></div></section>
       <section class="card"><h2>入力履歴</h2><div>${recordsHtml(mold.records)}</div></section>`;
 
+    const shotInput = document.querySelector('#shot-count');
+    const preview = document.querySelector('#shot-preview');
+    const submitButton = document.querySelector('#submit-shots');
+    const totalBefore = Number(mold.total_shots);
+    const updatePreview = () => {
+      const added = Number(shotInput.value);
+      if (!Number.isSafeInteger(added) || added <= 0) {
+        preview.textContent = '数字を入力すると加算後の累計を確認できます';
+        submitButton.textContent = 'ショット数を記録';
+        return;
+      }
+      preview.innerHTML = `<strong>${formatShots(totalBefore)} + ${formatShots(added)} → ${formatShots(totalBefore + added)} shots</strong>`;
+      submitButton.textContent = `${formatShots(added)} shotsを記録`;
+    };
+    shotInput.addEventListener('input', updatePreview);
+    document.querySelector('#recorded-on').addEventListener('change', (event) => {
+      document.querySelector('#date-label').textContent = formatDisplayDate(event.target.value);
+    });
     document.querySelector('#show-qr').addEventListener('click', () => showQr(mold));
     document.querySelector('#shot-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = event.currentTarget.querySelector('button[type="submit"]');
       button.disabled = true;
       try {
+        const addedShots = Number(shotInput.value);
+        const updatedTotal = totalBefore + addedShots;
         await request(`/api/molds/${id}/shots`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -75,7 +103,9 @@ async function renderMold(id) {
           })
         });
         await renderMold(id);
-        setMessage('ショット数を記録しました。');
+        const message = document.querySelector('#message');
+        message.innerHTML = `<div class="notice success-notice"><strong>✓ ${formatShots(addedShots)} shotsを記録しました</strong><span>累計 ${formatShots(updatedTotal)} shots</span><a class="button next-scan" href="/scan">次のQRを読む</a></div>`;
+        message.scrollIntoView({ behavior: 'smooth', block: 'center' });
       } catch (error) {
         button.disabled = false;
         setMessage(error.message, true);
