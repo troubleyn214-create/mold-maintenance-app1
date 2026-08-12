@@ -56,6 +56,14 @@ test('unauthenticated mold reads and writes return 401', async () => {
   await pool.end();
 });
 
+test('QR scanner browser asset is served', async () => {
+  const { app, pool } = await setup();
+  const response = await request(app).get('/vendor/html5-qrcode/html5-qrcode.min.js');
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /javascript/);
+  await pool.end();
+});
+
 test('company member lists only own molds', async () => {
   const { app, pool } = await setup();
   const agent = request.agent(app);

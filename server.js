@@ -158,7 +158,7 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
     } catch (error) { next(error); }
   });
 
-  app.use('/vendor/html5-qrcode', express.static(path.join(__dirname, 'node_modules', 'html5-qrcode', 'minified')));
+  app.use('/vendor/html5-qrcode', express.static(path.join(__dirname, 'node_modules', 'html5-qrcode')));
   app.use(express.static(path.join(__dirname, 'public')));
   app.get(['/molds/:id', '/scan', '/login'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
   app.use((error, req, res, next) => { console.error(error); res.status(500).json({ error: '処理に失敗しました。もう一度お試しください。' }); });
@@ -167,7 +167,8 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
 
 function createProductionPool() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL を設定してください。');
-  return new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const ssl = process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false };
+  return new Pool({ connectionString: process.env.DATABASE_URL, ssl });
 }
 if (require.main === module) {
   const pool = createProductionPool();
