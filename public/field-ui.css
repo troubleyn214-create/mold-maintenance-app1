@@ -29,3 +29,8 @@
 .success-notice strong { font-size: 20px; }
 .success-notice span { font-size: 17px; margin: 6px 0 14px; }
 .next-scan { width: 100%; font-size: 18px; }
+.header-action { margin-left: auto; background: #fff; color: var(--blue); min-height: 40px; padding: 8px 12px; }
+.login-shell { min-height: calc(100vh - 130px); display: grid; place-items: center; }
+.login-card { width: min(100%, 420px); background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: clamp(20px, 6vw, 34px); box-shadow: 0 8px 30px #14213d18; }
+.login-card input { margin-bottom: 18px; min-height: 48px; }
+.login-card h1 { margin-bottom: 8px; }

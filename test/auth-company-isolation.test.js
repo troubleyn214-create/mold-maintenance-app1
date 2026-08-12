@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const { newDb } = require('pg-mem');
 const { createApp } = require('../server');
+const { safeReturnPath } = require('../public/path-utils');
 
 const legacySchema = `
   CREATE TABLE shot_molds (
@@ -44,6 +45,7 @@ async function setup() {
 async function login(agent, email) {
   const response = await agent.post('/api/auth/login').send({ email, password: 'test-password' });
   assert.equal(response.status, 200);
+  return response.body.csrfToken;
 }
 
 test('unauthenticated mold reads and writes return 401', async () => {
@@ -67,10 +69,10 @@ test('company member lists only own molds', async () => {
 test('other-company mold id cannot be read, updated, or used for QR', async () => {
   const { app, pool, ids } = await setup();
   const agent = request.agent(app);
-  await login(agent, 'alpha@example.test');
+  const csrf = await login(agent, 'alpha@example.test');
   assert.equal((await agent.get(`/api/molds/${ids.m2}`)).status, 404);
   assert.equal((await agent.get(`/api/molds/${ids.m2}/qr`)).status, 404);
-  assert.equal((await agent.post(`/api/molds/${ids.m2}/shots`).send({ recordedOn: '2026-08-13', shotCount: 50, notes: '' })).status, 404);
+  assert.equal((await agent.post(`/api/molds/${ids.m2}/shots`).set('X-CSRF-Token',csrf).send({ recordedOn: '2026-08-13', shotCount: 50, notes: '' })).status, 404);
   const total = await pool.query('SELECT SUM(shot_count)::text AS total FROM shot_records WHERE mold_id=$1', [ids.m2]);
   assert.equal(total.rows[0].total, '200');
   await pool.end();
@@ -79,13 +81,74 @@ test('other-company mold id cannot be read, updated, or used for QR', async () =
 test('company member can create and update only own data with actor attribution', async () => {
   const { app, pool, ids } = await setup();
   const agent = request.agent(app);
-  await login(agent, 'alpha@example.test');
-  const created = await agent.post('/api/molds').send({ name: 'Alpha new mold' });
+  const csrf = await login(agent, 'alpha@example.test');
+  const created = await agent.post('/api/molds').set('X-CSRF-Token',csrf).send({ name: 'Alpha new mold' });
   assert.equal(created.status, 201);
-  const shot = await agent.post(`/api/molds/${ids.m1}/shots`).send({ recordedOn: '2026-08-13', shotCount: 25, notes: 'test' });
+  const shot = await agent.post(`/api/molds/${ids.m1}/shots`).set('X-CSRF-Token',csrf).send({ recordedOn: '2026-08-13', shotCount: 25, notes: 'test' });
   assert.equal(shot.status, 201);
   const saved = await pool.query('SELECT company_id,created_by_user_id FROM shot_records WHERE id=$1', [shot.body.id]);
   assert.equal(Number(saved.rows[0].company_id), Number(ids.c1));
   assert.equal(Number(saved.rows[0].created_by_user_id), Number(ids.u1));
+  await pool.end();
+});
+
+test('CSRF token is required and invalid token returns 403', async () => {
+  const { app, pool } = await setup();
+  const agent = request.agent(app);
+  await login(agent, 'alpha@example.test');
+  assert.equal((await agent.post('/api/molds').send({ name: 'blocked' })).status, 403);
+  assert.equal((await agent.post('/api/molds').set('X-CSRF-Token','invalid').send({ name: 'blocked' })).status, 403);
+  await pool.end();
+});
+
+test('login failures are rate limited with Japanese message', async () => {
+  const { pool } = await setup();
+  const app = createApp({ pool, secureCookies:false, loginMaxAttempts:2 });
+  const agent = request.agent(app);
+  assert.equal((await agent.post('/api/auth/login').send({email:'alpha@example.test',password:'wrong'})).status,401);
+  assert.equal((await agent.post('/api/auth/login').send({email:'alpha@example.test',password:'wrong'})).status,401);
+  const limited = await agent.post('/api/auth/login').send({email:'alpha@example.test',password:'test-password'});
+  assert.equal(limited.status,429);
+  assert.match(limited.body.error,/多すぎます/);
+  await pool.end();
+});
+
+test('expired session is rejected and removed on next successful login', async () => {
+  const { app, pool, ids } = await setup();
+  await pool.query("INSERT INTO auth_sessions(user_id,token_hash,csrf_token_hash,expires_at) VALUES($1,'expired','expired','2000-01-01')",[ids.u1]);
+  const agent=request.agent(app);
+  await login(agent,'alpha@example.test');
+  assert.equal(Number((await pool.query("SELECT COUNT(*) AS n FROM auth_sessions WHERE token_hash='expired'")).rows[0].n),0);
+  await pool.end();
+});
+
+test('an expired session cookie is rejected', async () => {
+  const { app, pool, ids } = await setup();
+  const { tokenHash } = require('../server');
+  await pool.query(
+    "INSERT INTO auth_sessions(user_id,token_hash,csrf_token_hash,expires_at) VALUES($1,$2,'expired','2000-01-01')",
+    [ids.u1, tokenHash('expired-cookie')]
+  );
+  const response = await request(app).get('/api/auth/session').set('Cookie', 'shot_session=expired-cookie');
+  assert.equal(response.status, 401);
+  assert.equal(response.body.code, 'AUTH_REQUIRED');
+  await pool.end();
+});
+
+test('QR login return path accepts only internal application paths', () => {
+  assert.equal(safeReturnPath('/molds/123'), '/molds/123');
+  assert.equal(safeReturnPath('/scan'), '/scan');
+  assert.equal(safeReturnPath('https://evil.example/molds/1'), '/');
+  assert.equal(safeReturnPath('//evil.example'), '/');
+  assert.equal(safeReturnPath('/molds/1?next=https://evil.example'), '/');
+});
+
+test('logout requires CSRF and invalidates the session', async () => {
+  const { app, pool }=await setup();
+  const agent=request.agent(app);
+  const csrf=await login(agent,'alpha@example.test');
+  assert.equal((await agent.post('/api/auth/logout')).status,403);
+  assert.equal((await agent.post('/api/auth/logout').set('X-CSRF-Token',csrf)).status,204);
+  assert.equal((await agent.get('/api/auth/session')).status,401);
   await pool.end();
 });
