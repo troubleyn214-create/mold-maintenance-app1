@@ -1,26 +1,37 @@
-# 金型管理アプリ
+# ショット数管理アプリ
 
-金型名称とメンテナンス履歴（実施日・内容・ショット数）を、QRコードから確認・更新するWebアプリです。
+生産終了・段取りのタイミングで金型のQRコードを読み取り、今回のショット数を入力するWebアプリです。入力値は履歴として保存され、金型ごとの累計ショット数へ自動加算されます。
 
-## スマホから使う
+## 主な機能
 
-次の公開URLをスマホのブラウザで開いてください。
+- 金型の登録
+- 金型ごとのQRコード生成・印刷
+- スマートフォンでのQRコード読み取り
+- 生産日・今回ショット数・任意メモの記録
+- 累計ショット数と入力履歴の表示
 
-`https://mold-maintenance-app1.onrender.com`
+## 環境変数
 
-金型詳細画面で表示・印刷するQRコードには、この公開URLが自動で入ります。PCを起動していなくても利用できます。
+- `DATABASE_URL`: PostgreSQL接続文字列（必須）
+- `PUBLIC_BASE_URL`: 公開URL（任意。QRコードへ埋め込むURL）
+- `PORT`: ポート番号（任意）
 
-## 更新方法
+秘密情報はリポジトリへ保存せず、Renderまたはローカル環境の環境変数へ設定してください。
 
-GitHubの `main` ブランチへ変更を保存すると、Renderが自動で再公開します。
+## 起動
 
-## Renderの設定
+```bash
+npm install
+npm start
+```
 
-- Web Service: Freeプラン / Node
-- Build Command: `npm install`
-- Start Command: `node server.js`
-- 環境変数: `DATABASE_URL` にRender PostgreSQLのInternal Database URLを設定
+## 現行アプリとの分離
 
-## 注意
+この版は `shot_molds` と `shot_records` を使用し、現行の金型メンテナンス版が使う `molds` と `maintenance_logs` は変更しません。本番運用では、現行アプリとは別のRender Web Serviceと別のPostgreSQLデータベースを推奨します。
 
-Renderの無料Webサービスは未使用時に停止し、最初のアクセスに少し時間がかかることがあります。無料PostgreSQLデータベースは **2026年8月31日** に削除予定のため、継続利用する場合は期限前に有料プランへの変更またはデータ移行が必要です。
+## 今後の候補
+
+- メンテナンス基準ショット数と到達警告
+- 入力履歴の訂正・取消
+- 担当者記録とログイン
+- CSV出力

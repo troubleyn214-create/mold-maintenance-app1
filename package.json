@@ -1,12 +1,13 @@
 {
-  "name": "mold-maintenance-manager",
+  "name": "shot-count-manager",
   "version": "1.0.0",
   "private": true,
-  "description": "QRコードで金型のメンテナンス履歴を管理するローカルWebアプリ",
+  "description": "QRコードで金型ごとのショット数を記録・集計するWebアプリ",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check public/app.js"
   },
   "dependencies": {
     "express": "^4.21.2",
