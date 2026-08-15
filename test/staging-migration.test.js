@@ -3,7 +3,7 @@ const path = require('path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
-const { newDb } = require('pg-mem');
+const { newDb, DataType } = require('pg-mem');
 
 const migration = (name) => fs.readFileSync(path.join(__dirname, '..', 'migrations', name), 'utf8');
 
@@ -23,6 +23,7 @@ async function snapshot(pool) {
 
 test('staging migration preserves ids and totals before enforcing tenant constraints', async () => {
   const db = newDb({ autoCreateForeignKeyIndices: true });
+  db.public.registerFunction({ name: 'char_length', args: [DataType.text], returns: DataType.integer, implementation: (value) => value.length });
   db.public.none(`
     CREATE TABLE shot_molds (id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE shot_records (id BIGSERIAL PRIMARY KEY,mold_id BIGINT NOT NULL REFERENCES shot_molds(id) ON DELETE CASCADE,recorded_on DATE NOT NULL,shot_count BIGINT NOT NULL CHECK(shot_count>0),notes TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -47,9 +48,11 @@ test('staging migration preserves ids and totals before enforcing tenant constra
   assert.equal(String((await pool.query('SELECT COUNT(*)::text AS n FROM shot_records WHERE company_id IS NULL OR created_by_user_id IS NULL')).rows[0].n), '0');
 
   await pool.query(migration('002_p0_constraints.sql'));
+  await pool.query(migration('003_counter_idempotency.sql'));
   const afterConstraints = await snapshot(pool);
   assert.deepEqual(afterConstraints, before);
   await assert.rejects(pool.query("INSERT INTO shot_molds(name,company_id) VALUES('invalid',NULL)"));
   await assert.rejects(pool.query("INSERT INTO shot_records(mold_id,company_id,created_by_user_id,recorded_on,shot_count) VALUES(10,999,$1,'2026-08-13',1)", [userId]));
+  await assert.rejects(pool.query("INSERT INTO shot_records(mold_id,company_id,created_by_user_id,recorded_on,shot_count,counter_value,idempotency_key) VALUES(10,$1,$2,'2026-08-13',1,126,'staging-request-0001'),(10,$1,$2,'2026-08-13',1,127,'staging-request-0001')", [companyId, userId]));
   await pool.end();
 });

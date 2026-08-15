@@ -30,6 +30,9 @@ async function setup() {
   const pool = new adapter.Pool();
   const phase1 = fs.readFileSync(path.join(__dirname, '..', 'migrations', '001_p0_nullable.sql'), 'utf8');
   await pool.query(phase1);
+  await pool.query('ALTER TABLE shot_records ADD COLUMN counter_value BIGINT');
+  await pool.query('ALTER TABLE shot_records ADD COLUMN idempotency_key TEXT');
+  await pool.query('CREATE UNIQUE INDEX shot_records_company_idempotency_unique ON shot_records(company_id,idempotency_key)');
   const passwordHash = await bcrypt.hash('test-password', 4);
   const c1 = (await pool.query("INSERT INTO companies(name) VALUES('Alpha') RETURNING id")).rows[0].id;
   const c2 = (await pool.query("INSERT INTO companies(name) VALUES('Beta') RETURNING id")).rows[0].id;
@@ -52,7 +55,7 @@ test('unauthenticated mold reads and writes return 401', async () => {
   const { app, pool } = await setup();
   assert.equal((await request(app).get('/api/molds')).status, 401);
   assert.equal((await request(app).post('/api/molds').send({ name: 'blocked' })).status, 401);
-  assert.equal((await request(app).post('/api/molds/1/shots').send({ recordedOn: '2026-08-13', shotCount: 1 })).status, 401);
+  assert.equal((await request(app).post('/api/molds/1/shots').send({ recordedOn: '2026-08-13', counterValue: 1 })).status, 401);
   await pool.end();
 });
 
@@ -80,7 +83,7 @@ test('other-company mold id cannot be read, updated, or used for QR', async () =
   const csrf = await login(agent, 'alpha@example.test');
   assert.equal((await agent.get(`/api/molds/${ids.m2}`)).status, 404);
   assert.equal((await agent.get(`/api/molds/${ids.m2}/qr`)).status, 404);
-  assert.equal((await agent.post(`/api/molds/${ids.m2}/shots`).set('X-CSRF-Token',csrf).send({ recordedOn: '2026-08-13', shotCount: 50, notes: '' })).status, 404);
+  assert.equal((await agent.post(`/api/molds/${ids.m2}/shots`).set('X-CSRF-Token',csrf).set('X-Idempotency-Key','other-company-0001').send({ recordedOn: '2026-08-13', counterValue: 250, notes: '' })).status, 404);
   const total = await pool.query('SELECT SUM(shot_count)::text AS total FROM shot_records WHERE mold_id=$1', [ids.m2]);
   assert.equal(total.rows[0].total, '200');
   await pool.end();
@@ -92,11 +95,46 @@ test('company member can create and update only own data with actor attribution'
   const csrf = await login(agent, 'alpha@example.test');
   const created = await agent.post('/api/molds').set('X-CSRF-Token',csrf).send({ name: 'Alpha new mold' });
   assert.equal(created.status, 201);
-  const shot = await agent.post(`/api/molds/${ids.m1}/shots`).set('X-CSRF-Token',csrf).send({ recordedOn: '2026-08-13', shotCount: 25, notes: 'test' });
+  const shot = await agent.post(`/api/molds/${ids.m1}/shots`).set('X-CSRF-Token',csrf).set('X-Idempotency-Key','own-company-000001').send({ recordedOn: '2026-08-13', counterValue: 125, notes: 'test' });
   assert.equal(shot.status, 201);
   const saved = await pool.query('SELECT company_id,created_by_user_id FROM shot_records WHERE id=$1', [shot.body.id]);
   assert.equal(Number(saved.rows[0].company_id), Number(ids.c1));
   assert.equal(Number(saved.rows[0].created_by_user_id), Number(ids.u1));
+  await pool.end();
+});
+
+test('server calculates the increment from the submitted cumulative counter', async () => {
+  const { app, pool, ids } = await setup();
+  const agent = request.agent(app);
+  const csrf = await login(agent, 'alpha@example.test');
+  const response = await agent.post(`/api/molds/${ids.m1}/shots`).set('X-CSRF-Token',csrf).set('X-Idempotency-Key','counter-value-0001').send({ recordedOn: '2026-08-13', counterValue: 158, notes: '' });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.shot_count, '58');
+  assert.equal(response.body.counter_value, '158');
+  await pool.end();
+});
+
+test('repeating the same request id does not add shots twice', async () => {
+  const { app, pool, ids } = await setup();
+  const agent = request.agent(app);
+  const csrf = await login(agent, 'alpha@example.test');
+  const post = () => agent.post(`/api/molds/${ids.m1}/shots`).set('X-CSRF-Token',csrf).set('X-Idempotency-Key','retry-safe-000001').send({ recordedOn: '2026-08-13', counterValue: 150, notes: 'retry' });
+  assert.equal((await post()).status, 201);
+  const repeated = await post();
+  assert.equal(repeated.status, 200);
+  assert.equal(repeated.body.duplicate, true);
+  const total = await pool.query('SELECT SUM(shot_count)::text AS total FROM shot_records WHERE mold_id=$1', [ids.m1]);
+  assert.equal(total.rows[0].total, '150');
+  await pool.end();
+});
+
+test('counter values that do not advance the current total are rejected', async () => {
+  const { app, pool, ids } = await setup();
+  const agent = request.agent(app);
+  const csrf = await login(agent, 'alpha@example.test');
+  const response = await agent.post(`/api/molds/${ids.m1}/shots`).set('X-CSRF-Token',csrf).set('X-Idempotency-Key','stale-counter-0001').send({ recordedOn: '2026-08-13', counterValue: 100, notes: '' });
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'COUNTER_NOT_ADVANCED');
   await pool.end();
 });
 

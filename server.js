@@ -139,15 +139,40 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
   });
   app.post('/api/molds/:id/shots', async (req, res, next) => {
     const recordedOn = String(req.body.recordedOn || '').trim();
-    const shotCount = parsePositiveInteger(req.body.shotCount);
+    const counterValue = parsePositiveInteger(req.body.counterValue);
+    const idempotencyKey = String(req.get('x-idempotency-key') || '').trim();
     const notes = String(req.body.notes || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(recordedOn) || shotCount === null || notes.length > 500) return res.status(400).json({ error: '日付・今回ショット数・メモを正しく入力してください。' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(recordedOn) || counterValue === null || !/^[A-Za-z0-9_-]{16,100}$/.test(idempotencyKey) || notes.length > 500) {
+      return res.status(400).json({ error: '日付・金型カウンターの累計値・メモを正しく入力してください。' });
+    }
+    const client = await pool.connect();
     try {
-      const mold = await pool.query('SELECT id FROM shot_molds WHERE id=$1 AND company_id=$2', [req.params.id, req.auth.company_id]);
-      if (!mold.rowCount) return res.status(404).json({ error: '金型が見つかりません。' });
-      const { rows } = await pool.query('INSERT INTO shot_records(company_id,mold_id,created_by_user_id,recorded_on,shot_count,notes) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,recorded_on,shot_count::text,notes,created_at', [req.auth.company_id, req.params.id, req.auth.user_id, recordedOn, shotCount, notes]);
+      await client.query('BEGIN');
+      const duplicate = await client.query('SELECT id,mold_id,recorded_on,shot_count::text,counter_value::text,notes,created_at FROM shot_records WHERE company_id=$1 AND idempotency_key=$2', [req.auth.company_id, idempotencyKey]);
+      if (duplicate.rowCount) {
+        await client.query('COMMIT');
+        if (String(duplicate.rows[0].mold_id) !== String(req.params.id)) return res.status(409).json({ error: '同じ送信IDが別の金型で使用されています。' });
+        return res.status(200).json({ ...duplicate.rows[0], duplicate: true });
+      }
+      const mold = await client.query('SELECT id FROM shot_molds WHERE id=$1 AND company_id=$2 FOR UPDATE', [req.params.id, req.auth.company_id]);
+      if (!mold.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: '金型が見つかりません。' });
+      }
+      const totalResult = await client.query('SELECT COALESCE(SUM(shot_count),0)::text AS total_shots FROM shot_records WHERE mold_id=$1 AND company_id=$2', [req.params.id, req.auth.company_id]);
+      const currentTotal = Number(totalResult.rows[0].total_shots);
+      if (!Number.isSafeInteger(currentTotal) || counterValue <= currentTotal) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `累計値は現在値 ${currentTotal.toLocaleString('ja-JP')} より大きい値を入力してください。`, code: 'COUNTER_NOT_ADVANCED', currentTotal });
+      }
+      const shotCount = counterValue - currentTotal;
+      const { rows } = await client.query('INSERT INTO shot_records(company_id,mold_id,created_by_user_id,recorded_on,shot_count,counter_value,idempotency_key,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,recorded_on,shot_count::text,counter_value::text,notes,created_at', [req.auth.company_id, req.params.id, req.auth.user_id, recordedOn, shotCount, counterValue, idempotencyKey, notes]);
+      await client.query('COMMIT');
       res.status(201).json(rows[0]);
-    } catch (error) { next(error); }
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      next(error);
+    } finally { client.release(); }
   });
   app.get('/api/molds/:id/qr', async (req, res, next) => {
     try {
