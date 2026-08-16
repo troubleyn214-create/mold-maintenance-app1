@@ -36,8 +36,8 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
   async function cleanupExpiredSessions() {
     await pool.query('DELETE FROM auth_sessions WHERE expires_at <= $1::timestamptz', [now()]);
   }
-  function rateState(req, email) {
-    const key = `${req.ip}|${email}`;
+  function rateState(req, loginId) {
+    const key = `${req.ip}|${loginId}`;
     const time = now().getTime();
     let state = loginAttempts.get(key);
     if (!state || state.resetAt <= time) {
@@ -78,10 +78,10 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
     try { await pool.query('SELECT 1'); res.json({ ok: true, database: 'ok' }); } catch (error) { next(error); }
   });
   app.post('/api/auth/login', async (req, res, next) => {
-    const email = String(req.body.email || '').trim().toLowerCase();
+    const loginId = String(req.body.loginId || req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '');
     try {
-      const rate = rateState(req, email);
+      const rate = rateState(req, loginId);
       if (rate.state.count >= loginMaxAttempts) {
         res.set('Retry-After', String(Math.ceil((rate.state.resetAt - rate.time) / 1000)));
         return res.status(429).json({ error: 'ログイン試行が多すぎます。しばらく待ってから再度お試しください。', code: 'LOGIN_RATE_LIMITED' });
@@ -90,10 +90,10 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
         SELECT u.id,u.email,u.password_hash,m.company_id,m.role
         FROM users u JOIN memberships m ON m.user_id=u.id JOIN companies c ON c.id=m.company_id
         WHERE u.email=$1 AND u.status='active' AND c.status='active'
-      `, [email]);
+      `, [loginId]);
       if (rows.length !== 1 || !(await bcrypt.compare(password, rows[0].password_hash))) {
         rate.state.count += 1;
-        return res.status(401).json({ error: 'メールアドレスまたはパスワードが違います。', code: 'LOGIN_FAILED' });
+        return res.status(401).json({ error: 'ログインIDまたはパスワードが違います。', code: 'LOGIN_FAILED' });
       }
       loginAttempts.delete(rate.key);
       await cleanupExpiredSessions();

@@ -38,11 +38,12 @@ async function setup() {
   const c2 = (await pool.query("INSERT INTO companies(name) VALUES('Beta') RETURNING id")).rows[0].id;
   const u1 = (await pool.query("INSERT INTO users(email,password_hash) VALUES('alpha@example.test',$1) RETURNING id", [passwordHash])).rows[0].id;
   const u2 = (await pool.query("INSERT INTO users(email,password_hash) VALUES('beta@example.test',$1) RETURNING id", [passwordHash])).rows[0].id;
-  await pool.query("INSERT INTO memberships(company_id,user_id,role) VALUES($1,$2,'admin'),($3,$4,'admin')", [c1, u1, c2, u2]);
+  const u3 = (await pool.query("INSERT INTO users(email,password_hash) VALUES('factory-floor-id',$1) RETURNING id", [passwordHash])).rows[0].id;
+  await pool.query("INSERT INTO memberships(company_id,user_id,role) VALUES($1,$2,'admin'),($3,$4,'admin'),($1,$5,'member')", [c1, u1, c2, u2, u3]);
   const m1 = (await pool.query("INSERT INTO shot_molds(company_id,name) VALUES($1,'Alpha mold') RETURNING id", [c1])).rows[0].id;
   const m2 = (await pool.query("INSERT INTO shot_molds(company_id,name) VALUES($1,'Beta mold') RETURNING id", [c2])).rows[0].id;
   await pool.query("INSERT INTO shot_records(company_id,mold_id,created_by_user_id,recorded_on,shot_count) VALUES($1,$2,$3,'2026-08-01',100),($4,$5,$6,'2026-08-02',200)", [c1, m1, u1, c2, m2, u2]);
-  return { pool, app: createApp({ pool, secureCookies: false }), ids: { c1, c2, u1, u2, m1, m2 } };
+  return { pool, app: createApp({ pool, secureCookies: false }), ids: { c1, c2, u1, u2, u3, m1, m2 } };
 }
 
 async function login(agent, email) {
@@ -64,6 +65,14 @@ test('QR scanner browser asset is served', async () => {
   const response = await request(app).get('/vendor/html5-qrcode/html5-qrcode.min.js');
   assert.equal(response.status, 200);
   assert.match(response.headers['content-type'], /javascript/);
+  await pool.end();
+});
+
+test('login ID is accepted without requiring an email address', async () => {
+  const { app, pool } = await setup();
+  const response = await request(app).post('/api/auth/login').send({ loginId: 'FACTORY-FLOOR-ID', password: 'test-password' });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.user.email, 'factory-floor-id');
   await pool.end();
 });
 
