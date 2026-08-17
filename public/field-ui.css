@@ -1,0 +1,36 @@
+.mold-identity {
+  background: #fff;
+  border: 2px solid var(--blue);
+  border-radius: 14px;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+}
+.mold-identity span, .mold-identity small { display: block; color: #52647a; font-weight: 700; }
+.mold-identity h1 { margin: 3px 0; font-size: 28px; }
+.shot-preview {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 12px 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: #eef4fc;
+  color: #52647a;
+  text-align: center;
+}
+.shot-preview strong { font-size: 21px; color: var(--blue-dark); }
+.compact-options { margin-top: 14px; border-top: 1px solid var(--line); }
+.compact-options details { padding: 11px 2px; border-bottom: 1px solid var(--line); }
+.compact-options summary { cursor: pointer; color: var(--blue-dark); font-weight: 750; }
+.detail-label { margin-top: 12px; }
+.success-notice { text-align: center; padding: 18px; }
+.success-notice strong, .success-notice span { display: block; }
+.success-notice strong { font-size: 20px; }
+.success-notice span { font-size: 17px; margin: 6px 0 14px; }
+.next-scan { width: 100%; font-size: 18px; }
+.header-action { margin-left: auto; background: #fff; color: var(--blue); min-height: 40px; padding: 8px 12px; }
+.login-shell { min-height: calc(100vh - 130px); display: grid; place-items: center; }
+.login-card { width: min(100%, 420px); background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: clamp(20px, 6vw, 34px); box-shadow: 0 8px 30px #14213d18; }
+.login-card input { margin-bottom: 18px; min-height: 48px; }
+.login-card h1 { margin-bottom: 8px; }
