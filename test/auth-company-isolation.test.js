@@ -33,6 +33,12 @@ async function setup() {
   await pool.query('ALTER TABLE shot_records ADD COLUMN counter_value BIGINT');
   await pool.query('ALTER TABLE shot_records ADD COLUMN idempotency_key TEXT');
   await pool.query('CREATE UNIQUE INDEX shot_records_company_idempotency_unique ON shot_records(company_id,idempotency_key)');
+  await pool.query(`CREATE TABLE maintenance_records (
+    id BIGSERIAL PRIMARY KEY, company_id BIGINT NOT NULL, mold_id BIGINT NOT NULL,
+    created_by_user_id BIGINT NOT NULL, performed_on DATE NOT NULL,
+    counter_value BIGINT NOT NULL, details TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
   const passwordHash = await bcrypt.hash('test-password', 4);
   const c1 = (await pool.query("INSERT INTO companies(name) VALUES('Alpha') RETURNING id")).rows[0].id;
   const c2 = (await pool.query("INSERT INTO companies(name) VALUES('Beta') RETURNING id")).rows[0].id;
@@ -73,6 +79,29 @@ test('login ID is accepted without requiring an email address', async () => {
   const response = await request(app).post('/api/auth/login').send({ loginId: 'FACTORY-FLOOR-ID', password: 'test-password' });
   assert.equal(response.status, 200);
   assert.equal(response.body.user.email, 'factory-floor-id');
+  await pool.end();
+});
+
+test('company member records maintenance at the current cumulative shot count', async () => {
+  const { app, pool, ids } = await setup();
+  const agent = request.agent(app);
+  const csrf = await login(agent, 'alpha@example.test');
+  const response = await agent.post(`/api/molds/${ids.m1}/maintenances`).set('X-CSRF-Token', csrf).send({ performedOn: '2026-08-18', details: '分解清掃とグリスアップ' });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.counter_value, '100');
+  const detail = await agent.get(`/api/molds/${ids.m1}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.maintenances[0].details, '分解清掃とグリスアップ');
+  await pool.end();
+});
+
+test('maintenance records cannot be created for another company mold', async () => {
+  const { app, pool, ids } = await setup();
+  const agent = request.agent(app);
+  const csrf = await login(agent, 'alpha@example.test');
+  const response = await agent.post(`/api/molds/${ids.m2}/maintenances`).set('X-CSRF-Token', csrf).send({ performedOn: '2026-08-18', details: 'blocked' });
+  assert.equal(response.status, 404);
+  assert.equal(Number((await pool.query('SELECT COUNT(*) AS n FROM maintenance_records')).rows[0].n), 0);
   await pool.end();
 });
 

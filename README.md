@@ -10,6 +10,8 @@
 - 生産日・金型カウンター累計値・任意メモの記録
 - 累計ショット数と入力履歴の表示
 - 二重送信・通信再送による重複加算の防止
+- メンテ実施内容と実施時点の累計ショット数を記録
+- スマホ向け縦長グラフでショット数とメンテの推移を表示
 
 ## 環境変数
 
@@ -35,6 +37,7 @@ npm start
 3. staging用の会社・ユーザーを作成し、既存データがある場合は会社ID・操作者IDを補完
 4. `migrations/002_p0_constraints.sql`
 5. `migrations/003_counter_idempotency.sql`
+6. `migrations/004_maintenance_records.sql`
 
 パスワードや接続文字列はSQL・リポジトリへ保存しません。
 

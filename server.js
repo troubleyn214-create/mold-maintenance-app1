@@ -133,8 +133,9 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
     try {
       const mold = await pool.query(`SELECT m.id,m.name,m.created_at,COALESCE(SUM(r.shot_count),0)::text AS total_shots FROM shot_molds m LEFT JOIN shot_records r ON r.mold_id=m.id AND r.company_id=m.company_id WHERE m.id=$1 AND m.company_id=$2 GROUP BY m.id,m.name,m.created_at`, [req.params.id, req.auth.company_id]);
       if (!mold.rowCount) return res.status(404).json({ error: '金型が見つかりません。' });
-      const records = await pool.query('SELECT id,recorded_on,shot_count::text,notes,created_at FROM shot_records WHERE mold_id=$1 AND company_id=$2 ORDER BY recorded_on DESC,id DESC', [req.params.id, req.auth.company_id]);
-      res.json({ ...mold.rows[0], records: records.rows });
+      const records = await pool.query('SELECT id,recorded_on,shot_count::text,counter_value::text,notes,created_at FROM shot_records WHERE mold_id=$1 AND company_id=$2 ORDER BY recorded_on DESC,id DESC', [req.params.id, req.auth.company_id]);
+      const maintenances = await pool.query('SELECT id,performed_on,counter_value::text,details,created_at FROM maintenance_records WHERE mold_id=$1 AND company_id=$2 ORDER BY performed_on DESC,id DESC', [req.params.id, req.auth.company_id]);
+      res.json({ ...mold.rows[0], records: records.rows, maintenances: maintenances.rows });
     } catch (error) { next(error); }
   });
   app.post('/api/molds/:id/shots', async (req, res, next) => {
@@ -173,6 +174,20 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
       await client.query('ROLLBACK').catch(() => {});
       next(error);
     } finally { client.release(); }
+  });
+  app.post('/api/molds/:id/maintenances', async (req, res, next) => {
+    const performedOn = String(req.body.performedOn || '').trim();
+    const details = String(req.body.details || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(performedOn) || !details || details.length > 500) {
+      return res.status(400).json({ error: '実施日とメンテ内容を500文字以内で入力してください。' });
+    }
+    try {
+      const mold = await pool.query('SELECT id FROM shot_molds WHERE id=$1 AND company_id=$2', [req.params.id, req.auth.company_id]);
+      if (!mold.rowCount) return res.status(404).json({ error: '金型が見つかりません。' });
+      const total = await pool.query('SELECT COALESCE(SUM(shot_count),0)::text AS total_shots FROM shot_records WHERE mold_id=$1 AND company_id=$2', [req.params.id, req.auth.company_id]);
+      const { rows } = await pool.query('INSERT INTO maintenance_records(company_id,mold_id,created_by_user_id,performed_on,counter_value,details) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,performed_on,counter_value::text,details,created_at', [req.auth.company_id, req.params.id, req.auth.user_id, performedOn, total.rows[0].total_shots, details]);
+      res.status(201).json(rows[0]);
+    } catch (error) { next(error); }
   });
   app.get('/api/molds/:id/qr', async (req, res, next) => {
     try {
