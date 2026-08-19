@@ -104,7 +104,13 @@ function createApp({ pool, secureCookies = process.env.NODE_ENV === 'production'
       res.json({ csrfToken, user: { id: rows[0].id, email: rows[0].email, companyId: rows[0].company_id, role: rows[0].role } });
     } catch (error) { next(error); }
   });
-  app.get('/api/auth/session', loadSession, requireAuth, (req, res) => res.json({ user: { id: req.auth.user_id, email: req.auth.email, companyId: req.auth.company_id, role: req.auth.role } }));
+  app.get('/api/auth/session', loadSession, requireAuth, async (req, res, next) => {
+    try {
+      const csrfToken = crypto.randomBytes(32).toString('base64url');
+      await pool.query('UPDATE auth_sessions SET csrf_token_hash=$1 WHERE id=$2', [tokenHash(csrfToken), req.auth.session_id]);
+      res.json({ csrfToken, user: { id: req.auth.user_id, email: req.auth.email, companyId: req.auth.company_id, role: req.auth.role } });
+    } catch (error) { next(error); }
+  });
   app.post('/api/auth/logout', loadSession, requireAuth, requireCsrf, async (req, res, next) => {
     try {
       await pool.query('DELETE FROM auth_sessions WHERE id=$1', [req.auth.session_id]);

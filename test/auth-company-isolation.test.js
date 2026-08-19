@@ -236,3 +236,16 @@ test('logout requires CSRF and invalidates the session', async () => {
   assert.equal((await agent.get('/api/auth/session')).status,401);
   await pool.end();
 });
+
+test('reloading an authenticated page refreshes the CSRF token', async () => {
+  const { app, pool, ids }=await setup();
+  const agent=request.agent(app);
+  const oldCsrf=await login(agent,'alpha@example.test');
+  const session=await agent.get('/api/auth/session');
+  assert.equal(session.status,200);
+  assert.ok(session.body.csrfToken);
+  assert.notEqual(session.body.csrfToken,oldCsrf);
+  assert.equal((await agent.post(`/api/molds/${ids.m1}/maintenances`).set('X-CSRF-Token',oldCsrf).send({performedOn:'2026-08-19',details:'old token'})).status,403);
+  assert.equal((await agent.post(`/api/molds/${ids.m1}/maintenances`).set('X-CSRF-Token',session.body.csrfToken).send({performedOn:'2026-08-19',details:'refreshed token'})).status,201);
+  await pool.end();
+});
